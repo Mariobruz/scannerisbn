@@ -1,0 +1,1183 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <link rel="manifest" href="manifest.json">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="My Library">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="description" content="Scansiona il codice ISBN dei tuoi libri e scarica la lista in Excel.">
+    <meta name="author" content="My Library">
+    <meta name="theme-color" content="#0a0a0b">
+    <title>My Library — Scanner ISBN</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #0a0a0b;
+            --bg-secondary: #141416;
+            --bg-card: #1a1a1e;
+            --bg-elevated: #222228;
+            --text-primary: #f5f5f7;
+            --text-secondary: #a1a1a6;
+            --text-muted: #6e6e73;
+            --accent: #00d4aa;
+            --accent-hover: #00e6b8;
+            --accent-muted: rgba(0, 212, 170, 0.15);
+            --danger: #ff6b6b;
+            --danger-hover: #ff5252;
+            --scan-line: #ff4444;
+            --border: #2a2a2e;
+            --shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+        }
+
+        body {
+            font-family: 'Manrope', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            min-height: 100dvh;
+            overflow-x: hidden;
+        }
+
+        .container {
+            max-width: 480px;
+            margin: 0 auto;
+            padding: 16px;
+            padding-bottom: 100px;
+        }
+
+        /* Header */
+        .header {
+            text-align: center;
+            padding: 24px 0 32px;
+        }
+
+        .header h1 {
+            font-size: 1.75rem;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            margin-bottom: 6px;
+        }
+
+        .header p {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        /* Scanner Section */
+        .scanner-section {
+            background: var(--bg-card);
+            border-radius: 20px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid var(--border);
+        }
+
+        .scanner-preview {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 4/3;
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 16px;
+            display: none;
+        }
+
+        .scanner-preview.active {
+            display: block;
+        }
+
+        .scanner-preview video,
+        .scanner-preview canvas {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        #interactive canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        /* Red animated scan line */
+        .scan-line {
+            position: absolute;
+            left: 10%;
+            right: 10%;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, var(--scan-line), var(--scan-line), transparent);
+            box-shadow: 0 0 15px var(--scan-line), 0 0 30px var(--scan-line);
+            animation: scanMove 1.5s ease-in-out infinite;
+            z-index: 10;
+        }
+
+        @keyframes scanMove {
+            0%, 100% { top: 25%; }
+            50% { top: 75%; }
+        }
+
+        /* Torch button */
+        .torch-btn {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            width: 44px;
+            height: 44px;
+            background: rgba(0, 0, 0, 0.6);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            font-size: 1.2rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            z-index: 20;
+        }
+
+        .torch-btn:active {
+            transform: scale(0.95);
+        }
+
+        .torch-btn.active {
+            background: var(--accent);
+            color: var(--bg-primary);
+        }
+
+        .scanner-placeholder {
+            width: 100%;
+            aspect-ratio: 4/3;
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 16px;
+            border: 2px dashed var(--border);
+        }
+
+        .scanner-placeholder.hidden {
+            display: none;
+        }
+
+        .scanner-placeholder i {
+            font-size: 3rem;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+        }
+
+        .scanner-placeholder p {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        /* Buttons */
+        .btn {
+            width: 100%;
+            padding: 16px 24px;
+            border: none;
+            border-radius: 12px;
+            font-family: inherit;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: var(--bg-primary);
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+
+        .btn-secondary {
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: var(--border);
+        }
+
+        .btn-danger {
+            background: transparent;
+            color: var(--danger);
+            padding: 8px;
+            width: auto;
+            font-size: 0.85rem;
+        }
+
+        .btn-danger:hover {
+            color: var(--danger-hover);
+        }
+
+        .btn-small {
+            padding: 10px 16px;
+            font-size: 0.9rem;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Manual ISBN Input */
+        .manual-input {
+            margin-top: 12px;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 8px;
+        }
+
+        .input-group input {
+            flex: 1;
+            padding: 14px 16px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .input-group input:focus {
+            border-color: var(--accent);
+        }
+
+        .input-group input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .input-group .btn {
+            width: auto;
+            padding: 14px 20px;
+        }
+
+        /* Book Preview Card */
+        .book-preview {
+            background: var(--bg-card);
+            border-radius: 20px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid var(--border);
+            display: none;
+        }
+
+        .book-preview.active {
+            display: block;
+            animation: slideUp 0.3s ease;
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .book-preview-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .book-preview-header h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        .book-preview-header button {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 4px;
+            font-size: 1.2rem;
+        }
+
+        .book-preview-content {
+            display: flex;
+            gap: 16px;
+        }
+
+        .book-cover-preview {
+            flex-shrink: 0;
+            width: 80px;
+            height: 120px;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .book-cover-preview img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .book-cover-preview .no-cover {
+            color: var(--text-muted);
+            font-size: 2rem;
+        }
+
+        .book-fields {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            flex: 1;
+        }
+
+        .field {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .field label {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .field input {
+            padding: 12px 14px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 0.95rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .field input:focus {
+            border-color: var(--accent);
+        }
+
+        .book-preview-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 16px;
+        }
+
+        .book-preview-actions .btn {
+            flex: 1;
+        }
+
+        /* Book List */
+        .book-list-section {
+            margin-bottom: 20px;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .section-header h2 {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .book-count {
+            background: var(--accent-muted);
+            color: var(--accent);
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .book-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .book-item {
+            background: var(--bg-card);
+            border-radius: 14px;
+            padding: 16px;
+            border: 1px solid var(--border);
+            animation: slideUp 0.3s ease;
+            display: flex;
+            gap: 14px;
+        }
+
+        .book-item-cover {
+            flex-shrink: 0;
+            width: 60px;
+            height: 90px;
+            background: var(--bg-secondary);
+            border-radius: 6px;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .book-item-cover img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .book-item-cover .no-cover {
+            color: var(--text-muted);
+            font-size: 1.5rem;
+        }
+
+        .book-item-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .book-item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 4px;
+        }
+
+        .book-item-title {
+            font-weight: 600;
+            font-size: 1rem;
+            line-height: 1.3;
+            flex: 1;
+            margin-right: 8px;
+        }
+
+        .book-item-author {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            margin-bottom: 10px;
+        }
+
+        .book-item-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .meta-tag {
+            background: var(--bg-elevated);
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-muted);
+        }
+
+        .empty-state i {
+            font-size: 3rem;
+            margin-bottom: 12px;
+            display: block;
+        }
+
+        .empty-state p {
+            font-size: 0.95rem;
+        }
+
+        /* Download Button Fixed */
+        .download-section {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 16px;
+            background: linear-gradient(to top, var(--bg-primary) 80%, transparent);
+            z-index: 100;
+        }
+
+        .download-section .btn {
+            max-width: 480px;
+            margin: 0 auto;
+        }
+
+        /* Loading State */
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            color: var(--text-secondary);
+        }
+
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 12px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Toast Notifications */
+        .toast {
+            position: fixed;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+            padding: 14px 24px;
+            border-radius: 12px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            z-index: 1000;
+            opacity: 0;
+            transition: all 0.3s ease;
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow);
+        }
+
+        .toast.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+
+        .toast.error {
+            border-color: var(--danger);
+            color: var(--danger);
+        }
+
+        .toast.success {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        /* Responsive adjustments */
+        @media (min-width: 481px) {
+            .container {
+                padding: 24px;
+            }
+        }
+
+        /* html5-qrcode overrides */
+        #qr-reader {
+            width: 100% !important;
+            height: 100% !important;
+            border: none !important;
+        }
+        #qr-reader video {
+            width: 100% !important;
+            height: 100% !important;
+            object-fit: cover !important;
+            border-radius: 12px;
+        }
+        #qr-reader img { display: none !important; }
+        #qr-reader__dashboard { display: none !important; }
+        #qr-reader__status_span { display: none !important; }
+        #qr-reader__header_message { display: none !important; }
+        #qr-reader__camera_selection { display: none !important; }
+        #qr-reader__filescan_input { display: none !important; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1><i class="fa-solid fa-barcode"></i> Scanner ISBN</h1>
+            <p>Scansiona i codici a barre dei tuoi libri</p>
+        </header>
+
+        <!-- Scanner Section -->
+        <section class="scanner-section">
+            <div class="scanner-placeholder" id="scannerPlaceholder">
+                <i class="fa-solid fa-camera"></i>
+                <p>Premi il pulsante per attivare la fotocamera</p>
+            </div>
+            
+            <div class="scanner-preview" id="scannerPreview">
+                <div id="qr-reader"></div>
+                <div class="scan-line"></div>
+                <button class="torch-btn" id="torchBtn">
+                    <i class="fa-solid fa-bolt"></i>
+                </button>
+            </div>
+
+            <button class="btn btn-primary" id="scanBtn">
+                <i class="fa-solid fa-camera"></i>
+                <span>Scansiona</span>
+            </button>
+
+            <div class="manual-input">
+                <div class="input-group">
+                    <input type="text" id="manualIsbn" placeholder="Inserisci ISBN manualmente">
+                    <button class="btn btn-secondary btn-small" id="searchBtn">
+                        <i class="fa-solid fa-search"></i>
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Loading State -->
+        <div class="loading" id="loadingState" style="display: none;">
+            <div class="spinner"></div>
+            <span>Ricerca libro in corso...</span>
+        </div>
+
+        <!-- Book Preview (after scan) -->
+        <section class="book-preview" id="bookPreview">
+            <div class="book-preview-header">
+                <h3><i class="fa-solid fa-book"></i> Libro trovato</h3>
+                <button id="closePreview"><i class="fa-solid fa-times"></i></button>
+            </div>
+            <div class="book-preview-content">
+                <div class="book-cover-preview" id="previewCover">
+                    <i class="fa-solid fa-book no-cover"></i>
+                </div>
+                <div class="book-fields">
+                    <div class="field">
+                        <label>Titolo</label>
+                        <input type="text" id="previewTitolo">
+                    </div>
+                    <div class="field">
+                        <label>Autore</label>
+                        <input type="text" id="previewAutore">
+                    </div>
+                    <div class="field">
+                        <label>Anno</label>
+                        <input type="text" id="previewAnno">
+                    </div>
+                    <div class="field">
+                        <label>Editore</label>
+                        <input type="text" id="previewEditore">
+                    </div>
+                    <div class="field">
+                        <label>Genere</label>
+                        <input type="text" id="previewGenere">
+                    </div>
+                    <div class="field">
+                        <label>Pagine</label>
+                        <input type="text" id="previewPagine">
+                    </div>
+                    <div class="field">
+                        <label>ISBN</label>
+                        <input type="text" id="previewIsbn" readonly>
+                    </div>
+                </div>
+            </div>
+            <div class="book-preview-actions">
+                <button class="btn btn-secondary" id="cancelBook">
+                    <i class="fa-solid fa-times"></i> Annulla
+                </button>
+                <button class="btn btn-primary" id="addBook">
+                    <i class="fa-solid fa-plus"></i> Aggiungi alla lista
+                </button>
+            </div>
+        </section>
+
+        <!-- Book List Section -->
+        <section class="book-list-section" id="bookListSection">
+            <div class="section-header">
+                <h2><i class="fa-solid fa-list"></i> Lista libri</h2>
+                <span class="book-count" id="bookCount">0 libri</span>
+            </div>
+            <div class="book-list" id="bookList">
+                <div class="empty-state" id="emptyState">
+                    <i class="fa-solid fa-book-open"></i>
+                    <p>Nessun libro nella lista.<br>Scansiona un codice a barre per iniziare!</p>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Download Button -->
+    <div class="download-section" id="downloadSection" style="display: none;">
+        <button class="btn btn-primary" id="downloadBtn">
+            <i class="fa-solid fa-file-excel"></i>
+            <span>Scarica Excel</span>
+        </button>
+    </div>
+
+    <!-- Toast Notification -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+        // Backend sullo stesso server — niente CORS, come Emergent
+        const BACKEND_URL = window.location.origin;
+
+        // State
+        let books = [];
+        let isScanning = false;
+        let currentBookData = null;
+        let torchEnabled = false;
+        let mediaTrack = null;
+
+        // DOM Elements
+        const scanBtn = document.getElementById('scanBtn');
+        const scannerPlaceholder = document.getElementById('scannerPlaceholder');
+        const scannerPreview = document.getElementById('scannerPreview');
+        const torchBtn = document.getElementById('torchBtn');
+        const manualIsbn = document.getElementById('manualIsbn');
+        const searchBtn = document.getElementById('searchBtn');
+        const loadingState = document.getElementById('loadingState');
+        const bookPreview = document.getElementById('bookPreview');
+        const closePreview = document.getElementById('closePreview');
+        const cancelBook = document.getElementById('cancelBook');
+        const addBook = document.getElementById('addBook');
+        const bookList = document.getElementById('bookList');
+        const bookCount = document.getElementById('bookCount');
+        const emptyState = document.getElementById('emptyState');
+        const downloadSection = document.getElementById('downloadSection');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const toast = document.getElementById('toast');
+
+        // Initialize from localStorage
+        function init() {
+            const savedBooks = localStorage.getItem('scannedBooks');
+            if (savedBooks) {
+                books = JSON.parse(savedBooks);
+                renderBookList();
+            }
+        }
+
+        // Save to localStorage
+        function saveBooks() {
+            localStorage.setItem('scannedBooks', JSON.stringify(books));
+        }
+
+        // Show toast notification
+        function showToast(message, type = '') {
+            toast.textContent = message;
+            toast.className = 'toast ' + type;
+            toast.classList.add('show');
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
+        }
+
+        // Vibrate on successful scan
+        function vibrateSuccess() {
+            if ('vibrate' in navigator) {
+                navigator.vibrate(200);
+            }
+        }
+
+        // Toggle torch/flashlight
+        async function toggleTorch() {
+            if (!html5Scanner) return;
+            try {
+                torchEnabled = !torchEnabled;
+                const capabilities = html5Scanner.getRunningTrackCameraCapabilities();
+                if (capabilities.torchFeature().isSupported()) {
+                    await capabilities.torchFeature().apply(torchEnabled);
+                    torchBtn.classList.toggle('active', torchEnabled);
+                } else {
+                    showToast('Torcia non disponibile su questo dispositivo', 'error');
+                    torchEnabled = false;
+                }
+            } catch (e) {
+                console.error('Torch error:', e);
+                showToast('Torcia non disponibile', 'error');
+                torchEnabled = false;
+            }
+        }
+
+        // html5-qrcode scanner instance
+        let html5Scanner = null;
+
+        // Start barcode scanner con html5-qrcode
+        async function startScanner() {
+            if (isScanning) {
+                await stopScanner();
+                return;
+            }
+
+            scannerPlaceholder.classList.add('hidden');
+            scannerPreview.classList.add('active');
+            scanBtn.innerHTML = '<i class="fa-solid fa-stop"></i><span>Ferma scanner</span>';
+            isScanning = true;
+
+            try {
+                html5Scanner = new Html5Qrcode("qr-reader");
+
+                await html5Scanner.start(
+                    { 
+                        facingMode: "environment",
+                        advanced: [{ focusMode: "continuous" }]
+                    },
+                    {
+                        fps: 20,
+                        qrbox: { width: 280, height: 100 },
+                        aspectRatio: 1.7,
+                        formatsToSupport: [
+                            Html5QrcodeSupportedFormats.EAN_13,
+                            Html5QrcodeSupportedFormats.EAN_8,
+                            Html5QrcodeSupportedFormats.CODE_128
+                        ],
+                        experimentalFeatures: {
+                            useBarCodeDetectorIfSupported: true
+                        }
+                    },
+                    onBarcodeDetected,
+                    () => {}
+                );
+
+                // Aumenta luminosità video per ambienti con poca luce
+                setTimeout(() => {
+                    const video = document.querySelector('#qr-reader video');
+                    if (video) {
+                        video.style.filter = 'brightness(1.3) contrast(1.2)';
+                    }
+                }, 800);
+
+                // Torcia
+                const track = html5Scanner?.getRunningTrackCameraCapabilities?.();
+                if (track) {
+                    mediaTrack = track;
+                }
+
+            } catch (err) {
+                console.error('Errore fotocamera:', err);
+                if (err.toString().includes('denied') || err.toString().includes('NotAllowed')) {
+                    showToast('Accesso fotocamera negato. Inserisci ISBN manualmente.', 'error');
+                } else {
+                    showToast('Fotocamera non disponibile', 'error');
+                }
+                await stopScanner();
+            }
+        }
+
+        // Stop scanner
+        async function stopScanner() {
+            try {
+                if (html5Scanner && html5Scanner.isScanning) {
+                    await html5Scanner.stop();
+                    html5Scanner.clear();
+                }
+            } catch (e) {
+                console.warn('Stop scanner:', e);
+            }
+            html5Scanner = null;
+            scannerPreview.classList.remove('active');
+            scannerPlaceholder.classList.remove('hidden');
+            scanBtn.innerHTML = '<i class="fa-solid fa-camera"></i><span>Scansiona</span>';
+            isScanning = false;
+            torchEnabled = false;
+            torchBtn.classList.remove('active');
+            mediaTrack = null;
+        }
+
+        // Callback rilevamento barcode
+        function onBarcodeDetected(decodedText) {
+            const code = decodedText.trim().replace(/[^0-9X]/gi, '');
+            if (!code || (code.length !== 10 && code.length !== 13)) return;
+            vibrateSuccess();
+            stopScanner();
+            fetchBookData(code);
+        }
+
+        // Fetch dati libro dal backend proxy
+        async function fetchBookData(isbn) {
+            loadingState.style.display = 'flex';
+            bookPreview.classList.remove('active');
+
+            try {
+                const res = await fetch(`${BACKEND_URL}/api/book/${isbn}`);
+                const data = await res.json();
+
+                if (data.trovato) {
+                    currentBookData = {
+                        isbn: data.isbn,
+                        titolo: data.titolo,
+                        autore: data.autore,
+                        anno: data.anno,
+                        editore: data.editore,
+                        genere: data.genere,
+                        pagine: data.pagine,
+                        haCopertina: data.haCopertina
+                    };
+                    showBookPreview(currentBookData);
+                } else {
+                    showToast('Libro non trovato. Inserisci i dati manualmente.', 'error');
+                    currentBookData = { isbn, titolo: '', autore: '', anno: '', editore: '', genere: '', pagine: '', haCopertina: false };
+                    showBookPreview(currentBookData);
+                }
+            } catch (err) {
+                console.error('Errore fetch:', err);
+                showToast('Errore di connessione al server.', 'error');
+                currentBookData = { isbn, titolo: '', autore: '', anno: '', editore: '', genere: '', pagine: '', haCopertina: false };
+                showBookPreview(currentBookData);
+            }
+
+            loadingState.style.display = 'none';
+        }
+
+        // Show book preview with editable fields
+        function showBookPreview(bookData) {
+            document.getElementById('previewTitolo').value = bookData.titolo;
+            document.getElementById('previewAutore').value = bookData.autore;
+            document.getElementById('previewAnno').value = bookData.anno;
+            document.getElementById('previewEditore').value = bookData.editore;
+            document.getElementById('previewGenere').value = bookData.genere;
+            document.getElementById('previewPagine').value = bookData.pagine;
+            document.getElementById('previewIsbn').value = bookData.isbn;
+            
+            // Copertina dal backend proxy — nessun blocco CORS
+            const coverEl = document.getElementById('previewCover');
+            if (bookData.isbn && bookData.haCopertina) {
+                coverEl.innerHTML = `<img 
+                    src="${BACKEND_URL}/api/cover/${bookData.isbn}"
+                    alt="Copertina"
+                    onerror="this.style.display='none'; this.parentElement.innerHTML='<i class=\"fa-solid fa-book no-cover\"></i>'"
+                >`;
+            } else {
+                coverEl.innerHTML = '<i class="fa-solid fa-book no-cover"></i>';
+            }
+            
+            bookPreview.classList.add('active');
+        }
+
+        // Hide book preview
+        function hideBookPreview() {
+            bookPreview.classList.remove('active');
+            currentBookData = null;
+        }
+
+        // Add book to list
+        function addBookToList() {
+            const newBook = {
+                id: Date.now(),
+                isbn: document.getElementById('previewIsbn').value,
+                titolo: document.getElementById('previewTitolo').value,
+                autore: document.getElementById('previewAutore').value,
+                anno: document.getElementById('previewAnno').value,
+                editore: document.getElementById('previewEditore').value,
+                genere: document.getElementById('previewGenere').value,
+                pagine: document.getElementById('previewPagine').value,
+                copertina: currentBookData?.copertina || ''
+            };
+
+            if (!newBook.titolo.trim()) {
+                showToast('Inserisci almeno il titolo del libro', 'error');
+                return;
+            }
+
+            // Check for duplicates
+            if (books.some(b => b.isbn === newBook.isbn)) {
+                showToast('Questo libro è già nella lista', 'error');
+                return;
+            }
+
+            books.push(newBook);
+            saveBooks();
+            renderBookList();
+            hideBookPreview();
+            showToast('Libro aggiunto alla lista!', 'success');
+        }
+
+        // Remove book from list
+        function removeBook(id) {
+            books = books.filter(b => b.id !== id);
+            saveBooks();
+            renderBookList();
+            showToast('Libro rimosso dalla lista', '');
+        }
+
+        // Render book list
+        function renderBookList() {
+            const listHtml = books.map(book => `
+                <div class="book-item">
+                    <div class="book-item-cover">
+                        ${book.isbn 
+                            ? `<img src="${BACKEND_URL}/api/cover/${escapeHtml(book.isbn)}" alt="Copertina" onerror="this.style.display='none'; this.parentElement.innerHTML='<i class=\"fa-solid fa-book no-cover\"></i>'">` 
+                            : '<i class="fa-solid fa-book no-cover"></i>'}
+                    </div>
+                    <div class="book-item-info">
+                        <div class="book-item-header">
+                            <span class="book-item-title">${escapeHtml(book.titolo)}</span>
+                            <button class="btn btn-danger" onclick="removeBook(${book.id})">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
+                        </div>
+                        <div class="book-item-author">${escapeHtml(book.autore) || 'Autore sconosciuto'}</div>
+                        <div class="book-item-meta">
+                            ${book.anno ? `<span class="meta-tag">${escapeHtml(book.anno)}</span>` : ''}
+                            ${book.editore ? `<span class="meta-tag">${escapeHtml(book.editore)}</span>` : ''}
+                            ${book.pagine ? `<span class="meta-tag">${escapeHtml(book.pagine)} pag.</span>` : ''}
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+
+            if (books.length > 0) {
+                bookList.innerHTML = listHtml;
+                emptyState.style.display = 'none';
+                downloadSection.style.display = 'block';
+            } else {
+                bookList.innerHTML = '';
+                bookList.appendChild(emptyState);
+                emptyState.style.display = 'block';
+                downloadSection.style.display = 'none';
+            }
+
+            bookCount.textContent = `${books.length} ${books.length === 1 ? 'libro' : 'libri'}`;
+        }
+
+        // Escape HTML to prevent XSS
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Download Excel file
+        function downloadExcel() {
+            if (books.length === 0) {
+                showToast('Nessun libro da esportare', 'error');
+                return;
+            }
+
+            try {
+                // Prepare data for Excel
+                const excelData = books.map(book => ({
+                    'ISBN': book.isbn,
+                    'Titolo': book.titolo,
+                    'Autore': book.autore,
+                    'Anno': book.anno,
+                    'Editore': book.editore,
+                    'Genere': book.genere,
+                    'Pagine': book.pagine
+                }));
+
+                // Create workbook and worksheet
+                const wb = XLSX.utils.book_new();
+                const ws = XLSX.utils.json_to_sheet(excelData);
+
+                // Set column widths
+                ws['!cols'] = [
+                    { wch: 15 },  // ISBN
+                    { wch: 40 },  // Titolo
+                    { wch: 25 },  // Autore
+                    { wch: 8 },   // Anno
+                    { wch: 20 },  // Editore
+                    { wch: 20 },  // Genere
+                    { wch: 8 }    // Pagine
+                ];
+
+                XLSX.utils.book_append_sheet(wb, ws, 'Libri');
+
+                // Generate filename with date
+                const date = new Date().toISOString().split('T')[0];
+                const filename = `libri_scansionati_${date}.xlsx`;
+
+                // Mobile-compatible download using Blob and link
+                const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                showToast('File Excel scaricato!', 'success');
+            } catch (error) {
+                console.error('Download error:', error);
+                showToast('Errore durante il download', 'error');
+            }
+        }
+
+        // Event Listeners
+        scanBtn.addEventListener('click', () => startScanner());
+        torchBtn.addEventListener('click', toggleTorch);
+
+        searchBtn.addEventListener('click', () => {
+            const isbn = manualIsbn.value.trim().replace(/[-\s]/g, '');
+            if (isbn && (isbn.length === 10 || isbn.length === 13)) {
+                fetchBookData(isbn);
+                manualIsbn.value = '';
+            } else {
+                showToast('Inserisci un ISBN valido (10 o 13 cifre)', 'error');
+            }
+        });
+
+        manualIsbn.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                searchBtn.click();
+            }
+        });
+
+        closePreview.addEventListener('click', hideBookPreview);
+        cancelBook.addEventListener('click', hideBookPreview);
+        addBook.addEventListener('click', addBookToList);
+        downloadBtn.addEventListener('click', downloadExcel);
+
+        // Initialize app
+        init();
+    </script>
+
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js')
+                    .then(reg => console.log('SW registrato:', reg.scope))
+                    .catch(err => console.log('SW errore:', err));
+            });
+        }
+    </script>
+</body>
+</html>
