@@ -1,5 +1,7 @@
 const https = require('https');
 
+const GOOGLE_API_KEY = 'AIzaSyD7luDhLE__OHBj_Q10OwSWr9GfG8SZLDs';
+
 function fetchUrl(url) {
     return new Promise((resolve, reject) => {
         https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
@@ -15,6 +17,25 @@ exports.handler = async (event) => {
     const isbn = parts[parts.length - 1];
     const headers = { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' };
 
+    // 1. Google Books con API key
+    try {
+        const data = await fetchUrl(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}&maxResults=1&key=${GOOGLE_API_KEY}`);
+        if (data && data.totalItems > 0) {
+            const book = data.items[0].volumeInfo;
+            return { statusCode: 200, headers, body: JSON.stringify({
+                trovato: true, isbn,
+                titolo: book.title || '',
+                autore: book.authors ? book.authors.join(', ') : '',
+                anno: book.publishedDate ? book.publishedDate.substring(0, 4) : '',
+                editore: book.publisher || '',
+                genere: book.categories ? book.categories.join(', ') : '',
+                pagine: book.pageCount ? String(book.pageCount) : '',
+                haCopertina: !!(book.imageLinks?.thumbnail || book.imageLinks?.smallThumbnail)
+            })};
+        }
+    } catch(e) {}
+
+    // 2. Fallback Open Library
     try {
         const data = await fetchUrl(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`);
         const key = `ISBN:${isbn}`;
