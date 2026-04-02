@@ -926,15 +926,37 @@
             fetchBookData(code);
         }
 
-        // Fetch dati libro dal backend proxy
+        // Fetch dati libro: Google Books dal browser, fallback Open Library dal backend
         async function fetchBookData(isbn) {
             loadingState.style.display = 'flex';
             bookPreview.classList.remove('active');
 
+            // 1. Google Books direttamente dal browser (nessun blocco CORS su chiamate browser)
+            try {
+                const gbRes = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}&maxResults=1`);
+                const gbData = await gbRes.json();
+                if (gbData.totalItems > 0) {
+                    const book = gbData.items[0].volumeInfo;
+                    currentBookData = {
+                        isbn,
+                        titolo: book.title || '',
+                        autore: book.authors ? book.authors.join(', ') : '',
+                        anno: book.publishedDate ? book.publishedDate.substring(0, 4) : '',
+                        editore: book.publisher || '',
+                        genere: book.categories ? book.categories.join(', ') : '',
+                        pagine: book.pageCount ? String(book.pageCount) : '',
+                        haCopertina: !!(book.imageLinks?.thumbnail || book.imageLinks?.smallThumbnail)
+                    };
+                    showBookPreview(currentBookData);
+                    loadingState.style.display = 'none';
+                    return;
+                }
+            } catch(e) { console.warn('Google Books fallback:', e); }
+
+            // 2. Fallback: Open Library via backend
             try {
                 const res = await fetch(`${BACKEND_URL}/api/book/${isbn}`);
                 const data = await res.json();
-
                 if (data.trovato) {
                     currentBookData = {
                         isbn: data.isbn,
@@ -947,18 +969,15 @@
                         haCopertina: data.haCopertina
                     };
                     showBookPreview(currentBookData);
-                } else {
-                    showToast('Libro non trovato. Inserisci i dati manualmente.', 'error');
-                    currentBookData = { isbn, titolo: '', autore: '', anno: '', editore: '', genere: '', pagine: '', haCopertina: false };
-                    showBookPreview(currentBookData);
+                    loadingState.style.display = 'none';
+                    return;
                 }
-            } catch (err) {
-                console.error('Errore fetch:', err);
-                showToast('Errore di connessione al server.', 'error');
-                currentBookData = { isbn, titolo: '', autore: '', anno: '', editore: '', genere: '', pagine: '', haCopertina: false };
-                showBookPreview(currentBookData);
-            }
+            } catch(e) { console.warn('Open Library fallback:', e); }
 
+            // 3. Nessuna fonte ha trovato il libro
+            showToast('Libro non trovato. Inserisci i dati manualmente.', 'error');
+            currentBookData = { isbn, titolo: '', autore: '', anno: '', editore: '', genere: '', pagine: '', haCopertina: false };
+            showBookPreview(currentBookData);
             loadingState.style.display = 'none';
         }
 
