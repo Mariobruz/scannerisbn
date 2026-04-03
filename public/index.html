@@ -835,6 +835,7 @@
         // html5-qrcode scanner instance
         let html5Scanner = null;
 
+        // Start barcode scanner con html5-qrcode
         async function startScanner() {
             if (isScanning) {
                 await stopScanner();
@@ -850,7 +851,10 @@
                 html5Scanner = new Html5Qrcode("qr-reader");
 
                 await html5Scanner.start(
-                    { facingMode: "environment" },
+                    { 
+                        facingMode: "environment",
+                        advanced: [{ focusMode: "continuous" }]
+                    },
                     {
                         fps: 20,
                         qrbox: { width: 280, height: 100 },
@@ -868,22 +872,32 @@
                     () => {}
                 );
 
+                // Aumenta luminosità video per ambienti con poca luce
                 setTimeout(() => {
                     const video = document.querySelector('#qr-reader video');
-                    if (video) video.style.filter = 'brightness(1.3) contrast(1.2)';
+                    if (video) {
+                        video.style.filter = 'brightness(1.3) contrast(1.2)';
+                    }
                 }, 800);
+
+                // Torcia
+                const track = html5Scanner?.getRunningTrackCameraCapabilities?.();
+                if (track) {
+                    mediaTrack = track;
+                }
 
             } catch (err) {
                 console.error('Errore fotocamera:', err);
                 if (err.toString().includes('denied') || err.toString().includes('NotAllowed')) {
                     showToast('Accesso fotocamera negato. Inserisci ISBN manualmente.', 'error');
                 } else {
-                    showToast('Fotocamera non disponibile: ' + err.message, 'error');
+                    showToast('Fotocamera non disponibile', 'error');
                 }
                 await stopScanner();
             }
         }
 
+        // Stop scanner
         async function stopScanner() {
             try {
                 if (html5Scanner && html5Scanner.isScanning) {
@@ -903,6 +917,7 @@
             mediaTrack = null;
         }
 
+        // Callback rilevamento barcode
         function onBarcodeDetected(decodedText) {
             const code = decodedText.trim().replace(/[^0-9X]/gi, '');
             if (!code || (code.length !== 10 && code.length !== 13)) return;
@@ -911,6 +926,241 @@
             fetchBookData(code);
         }
 
+        // Fetch dati libro: Google Books dal browser, fallback Open Library dal backend
+        async function fetchBookData(isbn) {
+            loadingState.style.display = 'flex';
+            bookPreview.classList.remove('active');
+
+            // 1. Google Books direttamente dal browser (nessun blocco CORS su chiamate browser)
+            try {
+                const gbRes = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}&maxResults=1`);
+                const gbData = await gbRes.json();
+                if (gbData.totalItems > 0) {
+                    const book = gbData.items[0].volumeInfo;
+                    currentBookData = {
+                        isbn,
+                        titolo: book.title || '',
+                        autore: book.authors ? book.authors.join(', ') : '',
+                        anno: book.publishedDate ? book.publishedDate.substring(0, 4) : '',
+                        editore: book.publisher || '',
+                        genere: book.categories ? book.categories.join(', ') : '',
+                        pagine: book.pageCount ? String(book.pageCount) : '',
+                        haCopertina: !!(book.imageLinks?.thumbnail || book.imageLinks?.smallThumbnail)
+                    };
+                    showBookPreview(currentBookData);
+                    loadingState.style.display = 'none';
+                    return;
+                }
+            } catch(e) { console.warn('Google Books fallback:', e); }
+
+            // 2. Fallback: Open Library via backend
+            try {
+                const res = await fetch(`${BACKEND_URL}/api/book/${isbn}`);
+                const data = await res.json();
+                if (data.trovato) {
+                    currentBookData = {
+                        isbn: data.isbn,
+                        titolo: data.titolo,
+                        autore: data.autore,
+                        anno: data.anno,
+                        editore: data.editore,
+                        genere: data.genere,
+                        pagine: data.pagine,
+                        haCopertina: data.haCopertina
+                    };
+                    showBookPreview(currentBookData);
+                    loadingState.style.display = 'none';
+                    return;
+                }
+            } catch(e) { console.warn('Open Library fallback:', e); }
+
+            // 3. Nessuna fonte ha trovato il libro
+            showToast('Libro non trovato. Inserisci i dati manualmente.', 'error');
+            currentBookData = { isbn, titolo: '', autore: '', anno: '', editore: '', genere: '', pagine: '', haCopertina: false };
+            showBookPreview(currentBookData);
+            loadingState.style.display = 'none';
+        }
+
+        // Show book preview with editable fields
+        function showBookPreview(bookData) {
+            document.getElementById('previewTitolo').value = bookData.titolo;
+            document.getElementById('previewAutore').value = bookData.autore;
+            document.getElementById('previewAnno').value = bookData.anno;
+            document.getElementById('previewEditore').value = bookData.editore;
+            document.getElementById('previewGenere').value = bookData.genere;
+            document.getElementById('previewPagine').value = bookData.pagine;
+            document.getElementById('previewIsbn').value = bookData.isbn;
+            
+            // Copertina dal backend proxy — nessun blocco CORS
+            const coverEl = document.getElementById('previewCover');
+            if (bookData.isbn && bookData.haCopertina) {
+                coverEl.innerHTML = `<img 
+                    src="${BACKEND_URL}/api/cover/${bookData.isbn}"
+                    alt="Copertina"
+                    onerror="this.style.display='none'; this.parentElement.innerHTML='<i class=\"fa-solid fa-book no-cover\"></i>'"
+                >`;
+            } else {
+                coverEl.innerHTML = '<i class="fa-solid fa-book no-cover"></i>';
+            }
+            
+            bookPreview.classList.add('active');
+        }
+
+        // Hide book preview
+        function hideBookPreview() {
+            bookPreview.classList.remove('active');
+            currentBookData = null;
+        }
+
+        // Add book to list
+        function addBookToList() {
+            const newBook = {
+                id: Date.now(),
+                isbn: document.getElementById('previewIsbn').value,
+                titolo: document.getElementById('previewTitolo').value,
+                autore: document.getElementById('previewAutore').value,
+                anno: document.getElementById('previewAnno').value,
+                editore: document.getElementById('previewEditore').value,
+                genere: document.getElementById('previewGenere').value,
+                pagine: document.getElementById('previewPagine').value,
+                copertina: currentBookData?.copertina || ''
+            };
+
+            if (!newBook.titolo.trim()) {
+                showToast('Inserisci almeno il titolo del libro', 'error');
+                return;
+            }
+
+            // Check for duplicates
+            if (books.some(b => b.isbn === newBook.isbn)) {
+                showToast('Questo libro è già nella lista', 'error');
+                return;
+            }
+
+            books.push(newBook);
+            saveBooks();
+            renderBookList();
+            hideBookPreview();
+            showToast('Libro aggiunto alla lista!', 'success');
+        }
+
+        // Remove book from list
+        function removeBook(id) {
+            books = books.filter(b => b.id !== id);
+            saveBooks();
+            renderBookList();
+            showToast('Libro rimosso dalla lista', '');
+        }
+
+        // Render book list
+        function renderBookList() {
+            const listHtml = books.map(book => `
+                <div class="book-item">
+                    <div class="book-item-cover">
+                        ${book.isbn 
+                            ? `<img src="${BACKEND_URL}/api/cover/${escapeHtml(book.isbn)}" alt="Copertina" onerror="this.style.display='none'; this.parentElement.innerHTML='<i class=\"fa-solid fa-book no-cover\"></i>'">` 
+                            : '<i class="fa-solid fa-book no-cover"></i>'}
+                    </div>
+                    <div class="book-item-info">
+                        <div class="book-item-header">
+                            <span class="book-item-title">${escapeHtml(book.titolo)}</span>
+                            <button class="btn btn-danger" onclick="removeBook(${book.id})">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
+                        </div>
+                        <div class="book-item-author">${escapeHtml(book.autore) || 'Autore sconosciuto'}</div>
+                        <div class="book-item-meta">
+                            ${book.anno ? `<span class="meta-tag">${escapeHtml(book.anno)}</span>` : ''}
+                            ${book.editore ? `<span class="meta-tag">${escapeHtml(book.editore)}</span>` : ''}
+                            ${book.pagine ? `<span class="meta-tag">${escapeHtml(book.pagine)} pag.</span>` : ''}
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+
+            if (books.length > 0) {
+                bookList.innerHTML = listHtml;
+                emptyState.style.display = 'none';
+                downloadSection.style.display = 'block';
+            } else {
+                bookList.innerHTML = '';
+                bookList.appendChild(emptyState);
+                emptyState.style.display = 'block';
+                downloadSection.style.display = 'none';
+            }
+
+            bookCount.textContent = `${books.length} ${books.length === 1 ? 'libro' : 'libri'}`;
+        }
+
+        // Escape HTML to prevent XSS
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Download Excel file
+        function downloadExcel() {
+            if (books.length === 0) {
+                showToast('Nessun libro da esportare', 'error');
+                return;
+            }
+
+            try {
+                // Prepare data for Excel
+                const excelData = books.map(book => ({
+                    'ISBN': book.isbn,
+                    'Titolo': book.titolo,
+                    'Autore': book.autore,
+                    'Anno': book.anno,
+                    'Editore': book.editore,
+                    'Genere': book.genere,
+                    'Pagine': book.pagine
+                }));
+
+                // Create workbook and worksheet
+                const wb = XLSX.utils.book_new();
+                const ws = XLSX.utils.json_to_sheet(excelData);
+
+                // Set column widths
+                ws['!cols'] = [
+                    { wch: 15 },  // ISBN
+                    { wch: 40 },  // Titolo
+                    { wch: 25 },  // Autore
+                    { wch: 8 },   // Anno
+                    { wch: 20 },  // Editore
+                    { wch: 20 },  // Genere
+                    { wch: 8 }    // Pagine
+                ];
+
+                XLSX.utils.book_append_sheet(wb, ws, 'Libri');
+
+                // Generate filename with date
+                const date = new Date().toISOString().split('T')[0];
+                const filename = `libri_scansionati_${date}.xlsx`;
+
+                // Mobile-compatible download using Blob and link
+                const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                showToast('File Excel scaricato!', 'success');
+            } catch (error) {
+                console.error('Download error:', error);
+                showToast('Errore durante il download', 'error');
+            }
+        }
+
+        // Event Listeners
         scanBtn.addEventListener('click', () => startScanner());
         torchBtn.addEventListener('click', toggleTorch);
 
