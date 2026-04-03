@@ -1,0 +1,7 @@
+/*
+  Permissions-Policy: camera=*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+
+/public/*
+  Permissions-Policy: camera=*
